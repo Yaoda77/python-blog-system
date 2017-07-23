@@ -3,6 +3,11 @@ import asyncio, logging
 
 import aiomysql
 
+
+def log(sql, args=()):
+    logging.info('SQL: %s' % sql)
+
+
 async def create_pool(loop, **kw):
     logging.info('create database connection pool...')
     global __pool
@@ -19,6 +24,13 @@ async def create_pool(loop, **kw):
         loop=loop
     )
 
+async def destory_pool():
+    global __pool
+    if __pool:
+        __pool.close()
+        await __pool.wait_closed()
+
+
 async def select(sql, args, size=None):
     log(sql, args)
     global __pool
@@ -33,24 +45,28 @@ async def select(sql, args, size=None):
         logging.info('rows returned: %s' %len(rs))
         return rs
 
+
+# define function to execute insert, update and delete for SQL
+async def execute(sql, args):
+    log(sql)
+    async with __pool.get() as conn:
+        try:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(sql.replace('?', '%s'), args)
+                affected = cur.rowcount
+            await conn.commit()
+        except BaseException as e:
+            raise
+        return affected
+
+
+# This function is used to add placeholder for __insert__ in ModelMetaClass
 def create_args_string(num):
     L = []
     for n in range(num):
          L.append('?')
     return ', '.join(L)
 
-#define function to execute insert, update and delete for SQL
-async def execute(sql, args):
-    log(sql)
-    async with __pool.get() as conn:
-        try:
-            cur = await conn.cursor()
-            await cur.execute(sql.replace('?', '%s'), args)
-            affected = cur.rowcount
-            await cur.close()
-        except BaseException as e:
-            raise
-        return affected
 
 class Field(object):
 
@@ -63,26 +79,29 @@ class Field(object):
     def __str__(self):
         return '<%s, %s:%s>' %(self.__class__.__name__,self.column_type, self.name)
 
+
 class StringField(Field):
 
     def __init__(self, name=None, primary_key=False, default=None, ddl='varchar(100)'):
         super().__init__(name, ddl, primary_key, default)
+
 
 class IntegerField(Field):
 
     def __init__(self, name=None, primary_key=True, default=None, ddl='bigint'):
         super().__init__(name, ddl, primary_key, default)
 
+
 class ModelMetaclass(type):
 
     def __new__(cls, name, bases, attrs):
-        #except Model class itself:
-        if name=='Model':
+        # except Model class itself:
+        if name == 'Model':
             return type.__new__(cls, name, bases, attrs)
-        #get the name of table:
+        # get the name of table:
         tableName = attrs.get('__table__', None) or name
         logging.info('found model： %s（table: %s）' %(name, tableName))
-        #get all Field and primaryKeyName:
+        # get all Field and primaryKeyName:
         mappings = dict()
         fields = []
         primaryKey = None
@@ -100,7 +119,7 @@ class ModelMetaclass(type):
             raise RuntimeError('Primary key not found.')
         for k in mappings.keys():
             attrs.pop(k)
-        escaped_fields = list(map(lambda f:'`%s`' %f, fields))
+        escaped_fields = list(map(lambda f: '`%s`' % f, fields))
         attrs['__mappings__'] = mappings
         attrs['__table__'] = tableName
         attrs['__primary_key__'] = primaryKey
@@ -113,6 +132,7 @@ class ModelMetaclass(type):
         attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
         return type.__new__(cls, name, bases, attrs)
 
+
 class Model(dict, metaclass=ModelMetaclass):
 
     def __init__(self, **kw):
@@ -124,11 +144,11 @@ class Model(dict, metaclass=ModelMetaclass):
         except KeyError:
             raise AttributeError(r"'Model' object has no attribute '%s'" % key)
 
-    def __setattr__(selfself, key, value):
+    def __setattr__(self, key, value):
         self[key] = value
 
     def getValue(self, key):
-        return  getattr(self, key, None)
+        return getattr(self, key, None)
 
     def getValueOrDefault(self, key):
         value = getattr(self, key, None)
@@ -136,9 +156,9 @@ class Model(dict, metaclass=ModelMetaclass):
             field = self.__mappings__[key]
             if field.default is not None:
                 value = field.default() if callable(field.default) else field.default
-                logging.debug('using default value for %s: %s' %(key,str(value)))
+                logging.debug('using default value for %s: %s' % (key, str(value)))
                 setattr(self, key, value)
-            return value
+        return value
 
     @classmethod
     async def find(cls, pk):
@@ -149,20 +169,43 @@ class Model(dict, metaclass=ModelMetaclass):
         return cls(**rs[0])
 
     @classmethod
-    async def findAll(cls, require):
-        """find object by input requirement"""
-        rs = await select('%s where %s' % (cls.__select__, require), ())
-        if len(rs) == 0:
-            return None
-        return cls(**rs)
+    async def findAll(cls, where=None, args=None, **kw):
+        ' find objects by where clause. '
+        sql = [cls.__select__]
+        if where:
+            sql.append('where')
+            sql.append(where)
+        if args is None:
+            args = []
+        orderBy = kw.get('orderBy', None)
+        if orderBy:
+            sql.append('order by')
+            sql.append(orderBy)
+        limit = kw.get('limit', None)
+        if limit is not None:
+            sql.append('limit')
+            if isinstance(limit, int):
+                sql.append('?')
+                args.append(limit)
+            elif isinstance(limit, tuple) and len(limit) == 2:
+                sql.append('?, ?')
+                args.extend(limit)
+            else:
+                raise ValueError('Invalid limit value: %s' % str(limit))
+        rs = await select(' '.join(sql), args)
+        return [cls(**r) for r in rs]
 
     @classmethod
     async def findNumber(cls, require):
         """find object by input requirement and return int"""
-        rs = await select('%s where %s' % (cls.__select__, require), ())
+        sql = ['select %s _num_ from `%s`' % (selectField, cls.__table__)]
+        if where:
+            sql.append('where')
+            sql.append(where)
+        rs = await select(' '.join(sql), args, 1)
         if len(rs) == 0:
             return None
-        return cls(**rs)
+        return rs[0]['_num_']
 
     async def save(self):
         args = list(map(self.getValueOrDefault, self.__fields__))
@@ -172,15 +215,14 @@ class Model(dict, metaclass=ModelMetaclass):
             logging.warning('failed to insert record: affected rows:%s' % rows)
 
     async def update(self):
-        args = list(map(self.getValueOrDefault, self.__fields__))
-        args.append(self.getValueOrDefault(self.__primary_key__))
+        args = list(map(self.getValue, self.__fields__))
+        args.append(self.getValue(self.__primary_key__))
         rows = await execute(self.__update__, args)
         if rows != 1:
             logging.warning('failed to update record: affected rows:%s' % rows)
 
     async def remove(self):
-        args = list(map(self.getValueOrDefault, self.__fields__))
-        args.append(self.getValueOrDefault(self.__primary_key__))
+        args = [self.getValue(self.__primary_key__)]
         rows = await execute(self.__delete__, args)
         if rows != 1:
             logging.warning('failed to delete record: affected rows:%s' % rows)
