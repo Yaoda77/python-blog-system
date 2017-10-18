@@ -92,6 +92,24 @@ class IntegerField(Field):
         super().__init__(name, ddl, primary_key, default)
 
 
+class BooleanField(Field):
+
+    def __init__(self, name=None, default=False):
+        super().__init__(name, 'boolean', False, default)
+
+
+class FloatField(Field):
+
+    def __init__(self, name=None, primary_key=False, default=0.0):
+        super().__init__(name, 'real', primary_key, default)
+
+
+class TextField(Field):
+
+    def __init__(self, name=None, default=None):
+        super().__init__(name, 'text', False, default)
+
+
 class ModelMetaclass(type):
 
     def __new__(cls, name, bases, attrs):
@@ -170,7 +188,7 @@ class Model(dict, metaclass=ModelMetaclass):
 
     @classmethod
     async def findAll(cls, where=None, args=None, **kw):
-        ' find objects by where clause. '
+        """ find objects by where clause."""
         sql = [cls.__select__]
         if where:
             sql.append('where')
