@@ -1,4 +1,13 @@
-import logging;  logging.basicConfig(level=logging.INFO)
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+__author__ = 'Michael Liao'
+
+'''
+async web application.
+'''
+
+import logging; logging.basicConfig(level=logging.INFO)
 
 import asyncio, os, json, time
 from datetime import datetime
@@ -9,8 +18,7 @@ from jinja2 import Environment, FileSystemLoader
 import ORM
 from coroweb import add_routes, add_static
 
-
-def init_jinja2(app,**kw):
+def init_jinja2(app, **kw):
     logging.info('init jinja2...')
     options = dict(
         autoescape = kw.get('autoescape', True),
@@ -37,7 +45,6 @@ async def logger_factory(app, handler):
         # await asyncio.sleep(0.3)
         return (await handler(request))
     return logger
-
 
 async def data_factory(app, handler):
     async def parse_data(request):
@@ -102,9 +109,6 @@ def datetime_filter(t):
     dt = datetime.fromtimestamp(t)
     return u'%s年%s月%s日' % (dt.year, dt.month, dt.day)
 
-def index(request):
-    return web.Response(body=b'<h1>Awesome</h1>', content_type='text/html')
-
 async def init(loop):
     await ORM.create_pool(loop=loop, host='127.0.0.1', port=3306, user='www-data', password='www-data', db='awesome')
     app = web.Application(loop=loop, middlewares=[
@@ -113,7 +117,6 @@ async def init(loop):
     init_jinja2(app, filters=dict(datetime=datetime_filter))
     add_routes(app, 'handlers')
     add_static(app)
-    app.router.add_route('GET', '/', index)
     srv = await loop.create_server(app.make_handler(), '127.0.0.1', 9000)
     logging.info('server started at http://127.0.0.1:9000...')
     return srv
