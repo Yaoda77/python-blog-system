@@ -214,7 +214,8 @@ class Model(dict, metaclass=ModelMetaclass):
         return [cls(**r) for r in rs]
 
     @classmethod
-    async def findNumber(cls, require):
+    @asyncio.coroutine
+    async def findNumber(cls, selectField, where=None, args=None):
         """find object by input requirement and return int"""
         sql = ['select %s _num_ from `%s`' % (selectField, cls.__table__)]
         if where:
